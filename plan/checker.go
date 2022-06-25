@@ -5,6 +5,22 @@ import (
 	"regexp"
 )
 
+type NodeCheck struct {
+	Name        string
+	Description string
+	CreatedAt   string
+	Scope       []string
+	Exec        func(*Node)
+}
+
+type ExplainCheck struct {
+	Name        string
+	Description string
+	CreatedAt   string
+	Scope       []string
+	Exec        func(*Explain)
+}
+
 // Keep all checks in NODECHEKS and EXPLAINCHECKS so that we can
 // dynamically create a list of checks to display in webapp
 

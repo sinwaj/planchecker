@@ -3,6 +3,8 @@ package plan
 import (
 	"errors"
 	"fmt"
+	"io/ioutil"
+	"os"
 	"strconv"
 	"strings"
 )
@@ -348,4 +350,184 @@ func (e *Explain) BuildTree() {
 	}
 
 	logDebugf("########## END BUILD TREE ##########\n")
+}
+
+// Render explain for output to console
+func (e *Explain) PrintPlan() {
+
+	fmt.Println("Plan:")
+	e.Plans[0].TopNode.Render(0)
+
+	if len(e.Warnings) > 0 {
+		fmt.Printf("\n")
+		for _, w := range e.Warnings {
+			fmt.Printf("\x1b[%dm", warningColor)
+			fmt.Printf("WARNING: %s | %s\n", w.Cause, w.Resolution)
+			fmt.Printf("\x1b[%dm", 0)
+		}
+	}
+
+	fmt.Printf("\n")
+
+	if len(e.SliceStats) > 0 {
+		fmt.Println("Slice statistics:")
+		for _, stat := range e.SliceStats {
+			fmt.Printf("\t%s\n", stat)
+		}
+	}
+
+	if e.MemoryUsed > 0 {
+		fmt.Println("Statement statistics:")
+		fmt.Printf("\tMemory used: %d\n", e.MemoryUsed)
+		if e.MemoryWanted > 0 {
+			fmt.Printf("\tMemory wanted: %d\n", e.MemoryWanted)
+		}
+	}
+
+	if len(e.Settings) > 0 {
+		fmt.Println("Settings:")
+		for _, setting := range e.Settings {
+			fmt.Printf("\t%s = %s\n", setting.Name, setting.Value)
+		}
+	}
+
+	if e.OptimizerStatus != "" {
+		fmt.Println("Optimizer status:")
+		fmt.Printf("\t%s\n", e.OptimizerStatus)
+	}
+
+	if e.Runtime > 0 {
+		fmt.Println("Total runtime:")
+		fmt.Printf("\t%.0f ms\n", e.Runtime)
+	}
+
+}
+
+// Main init function
+func (e *Explain) InitPlan(plantext string) error {
+
+	// Split the data in to lines
+	e.lines = strings.Split(string(plantext), "\n")
+
+	// Parse lines in to node objects
+	err := e.parseLines()
+	if err != nil {
+		return err
+	}
+
+	if len(e.Nodes) == 0 {
+		return errors.New("Could not find any nodes in plan")
+	}
+
+	// Convert array of nodes to tree structure
+	e.BuildTree()
+
+	// Parse all nodes first so they are fully populated
+	for _, n := range e.Nodes {
+		// Parse ExtraInfo
+		err := parseNodeExtraInfo(n)
+		if err != nil {
+			return err
+		}
+	}
+
+	// If first node is an INSERT node then it will not have any startup or total cost
+	// template1=# explain insert INTO tbl1 select * from tbl1 ;
+	//     Insert (slice0; segments: 4)  (rows=13200 width=32)
+	//       ->  Seq Scan on tbl1  (cost=0.00..628.00 rows=13200 width=32)
+	// So copy stats from the first child to make calculations work as expected
+	if e.Nodes[0].TotalCost == 0 {
+		if len(e.Nodes) >= 2 {
+			e.Nodes[0].TotalCost = e.Nodes[1].TotalCost
+			e.Nodes[0].StartupCost = e.Nodes[1].StartupCost
+			e.Nodes[0].MsEnd = e.Nodes[1].MsEnd
+			e.Nodes[0].MsOffset = e.Nodes[1].MsOffset
+			e.Nodes[0].IsAnalyzed = e.Nodes[1].IsAnalyzed
+		}
+	}
+
+	// Loop again to perform checks
+	for _, n := range e.Nodes {
+		n.CalculateSubNodeDiff()
+
+		// Pass in Cost + Time of top node as it should be equal to total
+		n.CalculatePercentage(e.Nodes[0].TotalCost, e.Nodes[0].MsEnd)
+
+		// Run Node checks
+		for _, c := range NODECHECKS {
+			c.Exec(n)
+		}
+	}
+
+	// Run Explain checks
+	for _, c := range EXPLAINCHECKS {
+		c.Exec(e)
+	}
+
+	return nil
+}
+
+// Init from stdin (useful for psql -f myquery.sql > planchecker)
+// planchecker will handle reading from stdin
+func (e *Explain) InitFromStdin(debug bool) error {
+	logDebug = debug
+
+	logDebugf("InitFromStdin\n")
+
+	fi, err := os.Stdin.Stat()
+	if err != nil {
+		panic(err)
+	}
+
+	if fi.Size() == 0 {
+		return errors.New("stdin is empty")
+	}
+
+	bytes, _ := ioutil.ReadAll(os.Stdin)
+	plantext := string(bytes)
+
+	e.InitPlan(plantext)
+
+	return nil
+}
+
+// Init from string
+func (e *Explain) InitFromString(plantext string, debug bool) error {
+	logDebug = debug
+
+	logDebugf("InitFromString\n")
+
+	err := e.InitPlan(plantext)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// Init from file
+func (e *Explain) InitFromFile(filename string, debug bool) error {
+	logDebug = debug
+
+	logDebugf("InitFromFile\n")
+
+	// Check file exists
+	if _, err := os.Stat(filename); os.IsNotExist(err) {
+		return err
+	}
+
+	// Read all lines
+	filedata, err := ioutil.ReadFile(filename)
+	if err != nil {
+		return err
+	}
+
+	plantext := string(filedata)
+
+	err = e.InitPlan(plantext)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
