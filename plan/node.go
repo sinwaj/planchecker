@@ -60,6 +60,30 @@ type Node struct {
 	IsAnalyzed bool
 }
 
+// Init everything to -1
+func (n *Node) Init() {
+	n.ActualRows = -1
+	n.AvgRows = -1
+	n.Workers = -1
+	n.MaxRows = -1
+	n.MaxSeg = "-"
+	n.Scans = -1
+	n.MsFirst = -1
+	n.MsEnd = -1
+	n.MsOffset = -1
+	n.AvgMem = -1
+	n.MaxMem = -1
+	n.ExecMemLine = -1
+	n.SpillFile = -1
+	n.SpillReuse = -1
+	n.PartSelected = -1
+	n.PartSelectedTotal = -1
+	n.PartScanned = -1
+	n.PartScannedTotal = -1
+	n.Filter = ""
+	n.IsAnalyzed = false
+}
+
 func (n *Node) CalculateSubNodeDiff() {
 	msChild := 0.0
 	costChild := 0.0
